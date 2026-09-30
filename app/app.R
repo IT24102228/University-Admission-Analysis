@@ -7,6 +7,17 @@ library(shiny)
 data_path <- file.path("..", "data", "Graduate_Admissions.csv")
 
 admission_data <- read.csv(data_path)
+# Create admission category using the same 75% threshold
+admission_data$Admission_Class <- ifelse(
+  admission_data$Chance_of_Admit >= 0.75,
+  "High Admission",
+  "Lower Admission"
+)
+
+admission_data$Admission_Class <- factor(
+  admission_data$Admission_Class,
+  levels = c("Lower Admission", "High Admission")
+)
 source("naive_bayes_model.R", local = TRUE)
 
 
@@ -207,6 +218,92 @@ ui <- fluidPage(
           h3("Confusion Matrix"),
           tableOutput("nb_confusion")
         ),
+
+        tabPanel(
+  "Dataset Visualizations",
+
+  h2("University Admission Dataset Analysis"),
+
+  p(
+    "These charts compare student characteristics with admission
+     outcomes using a 75% admission-chance threshold."
+  ),
+
+  fluidRow(
+
+    column(
+      width = 6,
+      div(
+        class = "result-box",
+        plotOutput(
+          "research_admission_plot",
+          height = "350px"
+        )
+      )
+    ),
+
+    column(
+      width = 6,
+      div(
+        class = "result-box",
+        plotOutput(
+          "university_admission_plot",
+          height = "350px"
+        )
+      )
+    )
+  ),
+
+  fluidRow(
+
+    column(
+      width = 6,
+      div(
+        class = "result-box",
+        plotOutput(
+          "gre_boxplot",
+          height = "350px"
+        )
+      )
+    ),
+
+    column(
+      width = 6,
+      div(
+        class = "result-box",
+        plotOutput(
+          "toefl_boxplot",
+          height = "350px"
+        )
+      )
+    )
+  ),
+
+  fluidRow(
+
+    column(
+      width = 6,
+      div(
+        class = "result-box",
+        plotOutput(
+          "cgpa_boxplot",
+          height = "350px"
+        )
+      )
+    ),
+
+    column(
+      width = 6,
+      div(
+        class = "result-box",
+        plotOutput(
+          "sop_lor_plot",
+          height = "350px"
+        )
+      )
+    )
+  )
+),
 
         tabPanel(
           "Model Information",
@@ -455,6 +552,212 @@ server <- function(input, output, session) {
       las = 2,
       border = NA
     )
+    output$research_admission_plot <- renderPlot({
+
+  research_summary <- aggregate(
+    admission_data$Admission_Class == "High Admission",
+    by = list(Research = admission_data$Research),
+    FUN = mean
+  )
+
+  names(research_summary)[2] <- "High_Admission_Rate"
+
+  research_summary$Research_Label <- ifelse(
+    research_summary$Research == 1,
+    "Research Experience",
+    "No Research Experience"
+  )
+
+  admission_percentages <- research_summary$High_Admission_Rate * 100
+
+  bar_positions <- barplot(
+    admission_percentages,
+    names.arg = research_summary$Research_Label,
+    ylim = c(0, 100),
+    col = c("#f4a261", "#2ca58d"),
+    main = "Research Experience vs High Admission Rate",
+    ylab = "High Admission Rate (%)",
+    border = NA
+  )
+
+  text(
+    x = bar_positions,
+    y = admission_percentages + 4,
+    labels = paste0(
+      round(admission_percentages, 1),
+      "%"
+    ),
+    font = 2
+  )
+
+  abline(
+    h = 50,
+    col = "gray60",
+    lty = 2
+  )
+})
+
+output$university_admission_plot <- renderPlot({
+
+  university_summary <- aggregate(
+    admission_data$Admission_Class == "High Admission",
+    by = list(
+      University_Rating = admission_data$University_Rating
+    ),
+    FUN = mean
+  )
+
+  names(university_summary)[2] <- "High_Admission_Rate"
+
+  admission_percentages <-
+    university_summary$High_Admission_Rate * 100
+
+  bar_positions <- barplot(
+    admission_percentages,
+    names.arg = university_summary$University_Rating,
+    ylim = c(0, 100),
+    col = "#2878b5",
+    main = "University Rating vs High Admission Rate",
+    xlab = "University Rating",
+    ylab = "High Admission Rate (%)",
+    border = NA
+  )
+
+  text(
+    x = bar_positions,
+    y = admission_percentages + 4,
+    labels = paste0(
+      round(admission_percentages, 1),
+      "%"
+    ),
+    font = 2
+  )
+
+  abline(
+    h = 50,
+    col = "gray60",
+    lty = 2
+  )
+})
+
+output$gre_boxplot <- renderPlot({
+
+  boxplot(
+    GRE_Score ~ Admission_Class,
+    data = admission_data,
+    col = c("#f4a261", "#2ca58d"),
+    main = "GRE Score by Admission Class",
+    xlab = "Admission Class",
+    ylab = "GRE Score",
+    border = "#34495e"
+  )
+
+  stripchart(
+    GRE_Score ~ Admission_Class,
+    data = admission_data,
+    vertical = TRUE,
+    method = "jitter",
+    add = TRUE,
+    pch = 16,
+    col = rgb(0, 0, 0, 0.20)
+  )
+})
+
+output$toefl_boxplot <- renderPlot({
+
+  boxplot(
+    TOEFL_Score ~ Admission_Class,
+    data = admission_data,
+    col = c("#f4a261", "#2ca58d"),
+    main = "TOEFL Score by Admission Class",
+    xlab = "Admission Class",
+    ylab = "TOEFL Score",
+    border = "#34495e"
+  )
+
+  stripchart(
+    TOEFL_Score ~ Admission_Class,
+    data = admission_data,
+    vertical = TRUE,
+    method = "jitter",
+    add = TRUE,
+    pch = 16,
+    col = rgb(0, 0, 0, 0.20)
+  )
+})
+
+output$cgpa_boxplot <- renderPlot({
+
+  boxplot(
+    CGPA ~ Admission_Class,
+    data = admission_data,
+    col = c("#f4a261", "#2ca58d"),
+    main = "CGPA by Admission Class",
+    xlab = "Admission Class",
+    ylab = "CGPA",
+    border = "#34495e"
+  )
+
+  stripchart(
+    CGPA ~ Admission_Class,
+    data = admission_data,
+    vertical = TRUE,
+    method = "jitter",
+    add = TRUE,
+    pch = 16,
+    col = rgb(0, 0, 0, 0.20)
+  )
+})
+
+output$sop_lor_plot <- renderPlot({
+
+  sop_lor_summary <- aggregate(
+    cbind(SOP, LOR) ~ Admission_Class,
+    data = admission_data,
+    FUN = mean
+  )
+
+  comparison_values <- rbind(
+    sop_lor_summary$SOP,
+    sop_lor_summary$LOR
+  )
+
+  colnames(comparison_values) <-
+    sop_lor_summary$Admission_Class
+
+  rownames(comparison_values) <- c(
+    "SOP",
+    "LOR"
+  )
+
+  bar_positions <- barplot(
+    comparison_values,
+    beside = TRUE,
+    ylim = c(0, 5),
+    col = c("#2878b5", "#e76f51"),
+    main = "Average SOP and LOR by Admission Class",
+    xlab = "Admission Class",
+    ylab = "Average Rating",
+    border = NA,
+    legend.text = c(
+      "Statement of Purpose",
+      "Letter of Recommendation"
+    ),
+    args.legend = list(
+      x = "topleft",
+      bty = "n",
+      cex = 0.8
+    )
+  )
+
+  text(
+    x = bar_positions,
+    y = comparison_values + 0.15,
+    labels = round(comparison_values, 2),
+    font = 2,
+    cex = 0.8
+  )
+})
   })
 }
 
