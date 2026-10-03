@@ -6,61 +6,42 @@ library(shiny)
 
 data_path <- file.path("..", "data", "Graduate_Admissions.csv")
 
-admission_data <- read.csv(data_path)
-# Create admission category using the same 75% threshold
-admission_data$Admission_Class <- ifelse(
-  admission_data$Chance_of_Admit >= 0.75,
-  "High Admission",
-  "Lower Admission"
-)
-
-admission_data$Admission_Class <- factor(
-  admission_data$Admission_Class,
-  levels = c("Lower Admission", "High Admission")
-)
-source("naive_bayes_model.R", local = TRUE)
-
-
-continuous_features <- c(
-  "GRE_Score",
-  "TOEFL_Score",
-  "University_Rating",
-  "SOP",
-  "LOR",
-  "CGPA"
-)
-
-# ---------------------------------------------------------
-# Train PCA and PCA regression model
-# ---------------------------------------------------------
-
-pca_model <- prcomp(
-  admission_data[, continuous_features],
-  center = TRUE,
-  scale. = TRUE
-)
-
-pca_scores <- as.data.frame(pca_model$x[, 1:2])
-
-pca_training_data <- data.frame(
-  Chance_of_Admit = admission_data$Chance_of_Admit,
-  PC1 = pca_scores$PC1,
-  PC2 = pca_scores$PC2,
-  Research = admission_data$Research
-)
-
-pca_regression_model <- lm(
-  Chance_of_Admit ~ PC1 + PC2 + Research,
-  data = pca_training_data
-)
+dataset_error <- NULL
+model_error <- NULL
+nb_error <- NULL
+admission_data <- NULL
+pca_model <- NULL
+pca_regression_model <- NULL
+continuous_features <- c("GRE_Score", "TOEFL_Score", "University_Rating", "SOP", "LOR", "CGPA")
+admission_data <- tryCatch({
+  data <- read.csv(data_path)
+  needed <- c(continuous_features, "Research", "Chance_of_Admit")
+  if (!all(needed %in% names(data))) stop("The project dataset is missing required columns.")
+  if (nrow(data) == 0) stop("The project dataset is empty.")
+  if (!all(vapply(data[, needed], function(x) is.numeric(x) && all(is.finite(x)), logical(1)))) {
+    stop("The project dataset contains missing or non-numeric feature values.")
+  }
+  data$Admission_Class <- factor(ifelse(data$Chance_of_Admit >= .75, "High Admission", "Lower Admission"),
+                                levels = c("Lower Admission", "High Admission"))
+  data
+}, error = function(e) { dataset_error <<- conditionMessage(e); NULL })
+if (!is.null(admission_data)) {
+  tryCatch({
+    pca_model <- prcomp(admission_data[, continuous_features], center = TRUE, scale. = TRUE)
+    pca_training_data <- data.frame(Chance_of_Admit = admission_data$Chance_of_Admit,
+      PC1 = pca_model$x[, 1], PC2 = pca_model$x[, 2], Research = admission_data$Research)
+    pca_regression_model <- lm(Chance_of_Admit ~ PC1 + PC2 + Research, data = pca_training_data)
+  }, error = function(e) { model_error <<- conditionMessage(e) })
+  tryCatch(source("naive_bayes_model.R", local = TRUE),
+           error = function(e) { nb_error <<- conditionMessage(e) })
+}
 
 # ---------------------------------------------------------
 # User interface
 # ---------------------------------------------------------
 
 ui <- fluidPage(
-
-  tags$head(
+ tags$head(
     tags$style(HTML("
       body {
         background-color: #f4f7fb;
@@ -89,17 +70,11 @@ ui <- fluidPage(
         font-weight: bold;
       }
     "))
-  ),
-
-  div(
-    class = "title-box",
-    h1("University Admission Analysis"),
-    p("PCA Regression Prediction Dashboard")
-  ),
-
-  sidebarLayout(
-
-    sidebarPanel(
+  , tags$style(HTML(".shiny-output-error-validation {color:#a12622;} .shiny-plot-output.recalculating {position:relative; opacity:.6;} .shiny-plot-output.recalculating:after {content:'Loading chart...';position:absolute;top:45%;left:35%;color:#173b67;} .table {font-size:14px;} .tab-content {padding-top:18px;} .step-track {padding:14px;background:#e6edf5;border-radius:8px;margin-bottom:18px;} .shiny-html-output {overflow-x:auto;} #bulk_wizard_error {color:#a12622;margin:10px 0;}"))),
+ div(class = "title-box", h1("University Admission Analysis"), p("Applicant prediction and selection support")),
+ uiOutput("app_status"),
+ tabsetPanel(id = "main_tabs",
+ tabPanel("Individual Student Prediction", sidebarLayout(sidebarPanel(
 
       h3("Student Information"),
 
@@ -171,14 +146,9 @@ ui <- fluidPage(
         "Predict Admission",
         class = "btn-primary"
       )
-    ),
-
-    mainPanel(
-
-      tabsetPanel(
-
-        tabPanel(
-          "Prediction",
+    ), mainPanel(
+ p("Enter student information and click Predict Admission to see the result."),
+ conditionalPanel("input.predict > 0", 
 
           div(
             class = "result-box",
@@ -189,17 +159,19 @@ ui <- fluidPage(
           ),
 
           plotOutput("probability_plot", height = "300px")
-        ),
-
-        tabPanel(
+        )
+ ))),
+ tabPanel(
           "Student Profile",
+          conditionalPanel("!input.predict", p("Create a prediction in Individual Student Prediction to view the student's profile.")),
           h3("Entered Student Information"),
           tableOutput("student_table"),
-          plotOutput("profile_plot", height = "400px")
+          p("Scores are shown as percentages of their maximum values, not percentiles or admission probabilities. Research: 100 means Yes; 0 means No."),
+          conditionalPanel("input.predict > 0", plotOutput("profile_plot", height = "400px"))
         ),
-
-        tabPanel(
+ tabPanel(
           "Naive Bayes",
+          conditionalPanel("!input.predict", p("Create a prediction in Individual Student Prediction to view the student's classification.")),
 
           div(
             class = "result-box",
@@ -218,18 +190,223 @@ ui <- fluidPage(
           h3("Confusion Matrix"),
           tableOutput("nb_confusion")
         ),
-
-        tabPanel(
-  "Dataset Visualizations",
-
-  h2("University Admission Dataset Analysis"),
-
-  p(
-    "These charts compare student characteristics with admission
-     outcomes using a 75% admission-chance threshold."
+ tabPanel("Dataset Visualizations", h2("University Admission Dataset Analysis"),
+ p("These charts use the project's historical dataset. They do not require an individual prediction or a bulk CSV upload."),
+ uiOutput("dataset_charts")),
+ tabPanel("Bulk Student Selection",
+ h3("Bulk Applicant Selection"),
+ uiOutput("bulk_step_indicator"),
+ textOutput("bulk_wizard_error"),
+ conditionalPanel("output.bulk_step == 1",
+   h4("1. Upload applicants"),
+   uiOutput("bulk_upload_control"),
+   actionButton("remove_bulk_file", "Remove CSV"),
+   p("You can replace a file by uploading another CSV. Removing it clears this session's results; your original file stays on your computer."),
+   uiOutput("bulk_upload_status"),
+   tableOutput("bulk_preview"),
+   actionButton("bulk_next_upload", "Next: ranking method", class = "btn-primary")
+ ),
+ conditionalPanel("output.bulk_step == 2",
+   h4("2. Choose a ranking method"),
+   radioButtons(
+    "ranking_method",
+    "Rank applicants using",
+    choices = c("Model prediction" = "model", "Custom weighted score" = "weighted",
+                "Combined score" = "combined"),
+    selected = "weighted"
+  ),
+   actionButton("bulk_back_method", "Back"),
+   actionButton("bulk_next_method", "Next: configure ranking", class = "btn-primary")
+ ),
+ conditionalPanel("output.bulk_step == 3",
+   h4("3. Configure ranking"),
+   conditionalPanel("input.ranking_method == 'model'", p("Model prediction uses the trained model. No feature weights are needed.")),
+   conditionalPanel("input.ranking_method != 'model'",   h4("Applicant feature weights"),
+  p("Weights are relative importance values. The system automatically converts their total to 100%. Set a weight to 0 to exclude that feature."),
+  fluidRow(
+    column(4,
+      numericInput("weight_gre", "GRE weight", 35, min = 0, max = 100),
+      numericInput("weight_toefl", "TOEFL weight", 5, min = 0, max = 100),
+      numericInput("weight_cgpa", "CGPA weight", 30, min = 0, max = 100)
+    ),
+    column(4,
+      numericInput("weight_sop", "SOP weight", 10, min = 0, max = 100),
+      numericInput("weight_lor", "LOR weight", 10, min = 0, max = 100)
+    ),
+    column(4,
+      numericInput("weight_university", "University Rating weight", 5, min = 0, max = 100),
+      numericInput("weight_research", "Research weight", 5, min = 0, max = 100)
+    )
+  ),
+  textOutput("bulk_weight_summary"),
+  p("For the weighted score, features use comparable 0-100 scales: GRE 130-340; TOEFL 0-120; University Rating, SOP and LOR 1-5; CGPA 0-10; Research 0-1. Higher values score higher. Apply your settings using Rank and Select Applicants."),
+  hr()),
+   conditionalPanel("input.ranking_method == 'combined'",   sliderInput(
+    "model_share", "Model contribution to combined score",
+    min = 0, max = 100, value = 60, step = 1, post = "%"
+  ),
+  textOutput("bulk_combination_summary"),
+  p("The remaining percentage uses the custom weighted score. The combined score is a ranking score for shortlisting, not an admission probability or model accuracy.")),
+   actionButton("bulk_back_settings", "Back"),
+   actionButton("bulk_next_settings", "Next: selection size", class = "btn-primary")
+ ),
+ conditionalPanel("output.bulk_step == 4",
+   h4("4. Choose the shortlist size"),
+     radioButtons(
+    "selection_method",
+    "Selection Method",
+    choices = c(
+      "Select top percentage" = "percentage",
+      "Select by available seats" = "seats"
+    ),
+    selected = "percentage"
   ),
 
-  fluidRow(
+  conditionalPanel(
+    condition = "input.selection_method == 'percentage'",
+
+    sliderInput(
+      "top_percentage",
+      "Top percentage to select",
+      min = 1,
+      max = 100,
+      value = 20,
+      step = 1,
+      post = "%"
+    )
+  ),
+
+  conditionalPanel(
+    condition = "input.selection_method == 'seats'",
+
+    numericInput(
+      "available_seats",
+      "Number of available seats",
+      value = 20,
+      min = 1,
+      step = 1
+    )
+  ),
+   actionButton("bulk_back_selection", "Back"),
+   actionButton("run_bulk_selection", "Rank and Select Applicants", class = "btn-primary")
+ ),
+ conditionalPanel("output.bulk_step == 5",
+   actionButton("bulk_edit_settings", "Back: change selection settings"),
+   actionButton("bulk_new_upload", "Back: upload or remove CSV"),
+   h3("Selected Applicants"),
+  textOutput("bulk_selection_summary"),
+  downloadButton("download_interview_shortlist", "Download Interview Shortlist (CSV)"),
+  downloadButton("download_selection_report", "Download Full Selection Report (CSV)"),
+  p("Generate results before downloading. The interview shortlist includes selected applicants only; the full report includes every applicant and their selection status."),
+  tableOutput("bulk_prediction_table"),
+  tags$details(
+    tags$summary("View all applicants and selection status"),
+    tableOutput("bulk_all_applicants_table")
+  ),
+  hr(),
+  h3("Individual Applicant Profile"),
+  uiOutput("bulk_applicant_selector"),
+  uiOutput("bulk_applicant_profile"),
+  plotOutput("bulk_applicant_radar", height = "480px"),
+  p("The radar chart compares this applicant with the applicant at the shortlist cutoff. Each feature is scaled from 0 to 100. A larger radar shape does not determine selection; the chosen ranking score and cutoff rank determine the decision.")
+ )
+),
+ tabPanel(
+          "Model Information",
+          h3("PCA Regression Model"),
+          p(
+            "The six continuous admission predictors are standardized
+             and combined into principal components."
+          ),
+          p(
+            "PC1 and PC2 are used together with research experience
+             to estimate the admission probability."
+          ),
+          tags$ul(
+            tags$li("Notebook test R-squared: 0.8126"),
+            tags$li("Notebook test MAE: 0.0456"),
+            tags$li("Notebook test RMSE: 0.0613"),
+            tags$li("PC1 and PC2 retained approximately 85.57% of variation")
+          ),
+          h3("Naive Bayes Model"),
+          p(
+            "The Naive Bayes model classifies whether the predicted
+             admission potential is high or lower using a 75% threshold."
+          )
+        )
+ )
+)
+
+# ---------------------------------------------------------
+# Server logic
+# ---------------------------------------------------------
+
+server <- function(input, output, session) {
+
+
+  wizard_step <- reactiveVal(1L)
+  wizard_error <- reactiveVal("")
+  current_upload <- reactiveVal(NULL)
+  upload_generation <- reactiveVal(0L)
+  output$bulk_step <- renderText(wizard_step())
+  outputOptions(output, "bulk_step", suspendWhenHidden = FALSE)
+  output$bulk_wizard_error <- renderText(wizard_error())
+  output$bulk_step_indicator <- renderUI({
+    labels <- c("Upload", "Ranking method", "Settings", "Selection size", "Results")
+    div(class = "step-track", paste0("Step ", wizard_step(), " of 5: ", labels[wizard_step()]))
+  })
+  output$bulk_upload_control <- renderUI({
+    upload_generation()
+    fileInput("bulk_file", "Upload Applicant CSV", accept = ".csv")
+  })
+  observeEvent(input$bulk_file, {
+    current_upload(input$bulk_file)
+    wizard_step(1L)
+    wizard_error("")
+  }, ignoreNULL = TRUE)
+  observeEvent(input$remove_bulk_file, {
+    current_upload(NULL)
+    upload_generation(isolate(upload_generation()) + 1L)
+    wizard_step(1L)
+    wizard_error("")
+  })
+  output$bulk_upload_status <- renderUI({
+    file <- current_upload()
+    if (is.null(file)) return(p("No CSV uploaded. Choose an applicant CSV to begin."))
+    data <- bulk_data()
+    p(paste0(file$name, " - ", nrow(data), " applicants ready. Preview: first 10 rows."))
+  })
+  advance <- function(check, destination) {
+    tryCatch({ force(check); wizard_error(""); wizard_step(destination) },
+      error = function(e) {
+        msg <- conditionMessage(e)
+        wizard_error(if (nzchar(msg)) msg else "Please upload a valid applicant CSV before continuing.")
+      })
+  }
+  observeEvent(input$bulk_next_upload, { advance(bulk_data(), 2L) })
+  observeEvent(input$bulk_next_method, { advance(req(input$ranking_method), 3L) })
+  observeEvent(input$bulk_next_settings, {
+    advance({
+      if (input$ranking_method != "model") bulk_weights()
+      if (input$ranking_method == "combined") bulk_model_share()
+    }, 4L)
+  })
+  observeEvent(input$run_bulk_selection, { advance(bulk_selection(), 5L) })
+  observeEvent(input$bulk_back_method, { wizard_step(1L); wizard_error("") })
+  observeEvent(input$bulk_back_settings, { wizard_step(2L); wizard_error("") })
+  observeEvent(input$bulk_back_selection, { wizard_step(3L); wizard_error("") })
+  observeEvent(input$bulk_edit_settings, { wizard_step(4L); wizard_error("") })
+  observeEvent(input$bulk_new_upload, { wizard_step(1L); wizard_error("") })
+  output$app_status <- renderUI({
+    errors <- c(dataset_error, model_error, nb_error)
+    if (length(errors)) div(class = "alert alert-warning", paste(errors, collapse = " "))
+  })
+  output$dataset_charts <- renderUI({
+    if (is.null(admission_data) || nrow(admission_data) == 0) {
+      return(div(class = "alert alert-info", "No dataset available. Check ../data/Graduate_Admissions.csv and restart the app.",
+                 if (!is.null(dataset_error)) p(dataset_error)))
+    }
+    tagList(fluidRow(
 
     column(
       width = 6,
@@ -302,170 +479,17 @@ ui <- fluidPage(
         )
       )
     )
-  )
-),
-
-        tabPanel(
-  "Bulk Student Selection",
-
-  h3("Bulk Applicant Selection"),
-
-  p(
-    "Upload a CSV file containing multiple applicants, rank them,
-     and select the strongest candidates."
-  ),
-
-  fileInput(
-    "bulk_file",
-    "Upload Applicant CSV",
-    accept = c(".csv")
-  ),
-
-  radioButtons(
-    "ranking_method",
-    "Rank applicants using",
-    choices = c("Model prediction" = "model", "Custom weighted score" = "weighted",
-                "Combined score" = "combined"),
-    selected = "weighted"
-  ),
-
-  sliderInput(
-    "model_share", "Model contribution to combined score",
-    min = 0, max = 100, value = 60, step = 1, post = "%"
-  ),
-  textOutput("bulk_combination_summary"),
-  p("The remaining percentage uses the custom weighted score. The combined score is a ranking score for shortlisting, not an admission probability or model accuracy."),
-
-  h4("Applicant feature weights"),
-  p("Weights are relative importance values. The system automatically converts their total to 100%. Set a weight to 0 to exclude that feature."),
-  fluidRow(
-    column(4,
-      numericInput("weight_gre", "GRE weight", 35, min = 0, max = 100),
-      numericInput("weight_toefl", "TOEFL weight", 5, min = 0, max = 100),
-      numericInput("weight_cgpa", "CGPA weight", 30, min = 0, max = 100)
-    ),
-    column(4,
-      numericInput("weight_sop", "SOP weight", 10, min = 0, max = 100),
-      numericInput("weight_lor", "LOR weight", 10, min = 0, max = 100)
-    ),
-    column(4,
-      numericInput("weight_university", "University Rating weight", 5, min = 0, max = 100),
-      numericInput("weight_research", "Research weight", 5, min = 0, max = 100)
-    )
-  ),
-  textOutput("bulk_weight_summary"),
-  p("For the weighted score, features use comparable 0-100 scales: GRE 130-340; TOEFL 0-120; University Rating, SOP and LOR 1-5; CGPA 0-10; Research 0-1. Higher values score higher. Changing weights updates the shortlist after predictions are generated."),
-  hr(),
-
-  radioButtons(
-    "selection_method",
-    "Selection Method",
-    choices = c(
-      "Select top percentage" = "percentage",
-      "Select by available seats" = "seats"
-    ),
-    selected = "percentage"
-  ),
-
-  conditionalPanel(
-    condition = "input.selection_method == 'percentage'",
-
-    sliderInput(
-      "top_percentage",
-      "Top percentage to select",
-      min = 1,
-      max = 100,
-      value = 20,
-      step = 1,
-      post = "%"
-    )
-  ),
-
-  conditionalPanel(
-    condition = "input.selection_method == 'seats'",
-
-    numericInput(
-      "available_seats",
-      "Number of available seats",
-      value = 20,
-      min = 1,
-      step = 1
-    )
-  ),
-
-  actionButton(
-    "run_bulk_selection",
-    "Rank and Select Applicants",
-    class = "btn-primary"
-  ),
-
-  hr(),
-
-  h3("Applicant Data Preview"),
-  tableOutput("bulk_preview"),
-
-  hr(),
-  h3("Selected Applicants"),
-  textOutput("bulk_selection_summary"),
-  downloadButton("download_interview_shortlist", "Download Interview Shortlist (CSV)"),
-  downloadButton("download_selection_report", "Download Full Selection Report (CSV)"),
-  p("Generate results before downloading. The interview shortlist includes selected applicants only; the full report includes every applicant and their selection status."),
-  tableOutput("bulk_prediction_table"),
-  tags$details(
-    tags$summary("View all applicants and selection status"),
-    tableOutput("bulk_all_applicants_table")
-  ),
-  hr(),
-  h3("Individual Applicant Profile"),
-  uiOutput("bulk_applicant_selector"),
-  uiOutput("bulk_applicant_profile"),
-  plotOutput("bulk_applicant_radar", height = "480px"),
-  p("The radar chart compares this applicant with the applicant at the shortlist cutoff. Each feature is scaled from 0 to 100. A larger radar shape does not determine selection; the chosen ranking score and cutoff rank determine the decision.")
-),
-
-        tabPanel(
-          "Model Information",
-          h3("PCA Regression Model"),
-          p(
-            "The six continuous admission predictors are standardized
-             and combined into principal components."
-          ),
-          p(
-            "PC1 and PC2 are used together with research experience
-             to estimate the admission probability."
-          ),
-          tags$ul(
-            tags$li("Notebook test R-squared: 0.8126"),
-            tags$li("Notebook test MAE: 0.0456"),
-            tags$li("Notebook test RMSE: 0.0613"),
-            tags$li("PC1 and PC2 retained approximately 85.57% of variation")
-          ),
-          h3("Naive Bayes Model"),
-          p(
-            "The Naive Bayes model classifies whether the predicted
-             admission potential is high or lower using a 75% threshold."
-          )
-        )
-      )
-    )
-  )
-)
-
-# ---------------------------------------------------------
-# Server logic
-# ---------------------------------------------------------
-
-server <- function(input, output, session) {
-
+  ))
+  })
 
   required_bulk_columns <- c(continuous_features, "Research")
 
   bulk_data <- reactive({
-    req(input$bulk_file)
+    req(current_upload())
 
     # Catch file-reading errors only, so Shiny validation messages remain visible.
     data <- tryCatch(
-      read.csv(input$bulk_file$datapath, stringsAsFactors = FALSE),
+      read.csv(current_upload()$datapath, stringsAsFactors = FALSE),
       error = function(e) NULL
     )
 
@@ -489,6 +513,20 @@ server <- function(input, output, session) {
       )
     )
 
+    for (column in required_bulk_columns) {
+      data[[column]] <- suppressWarnings(as.numeric(data[[column]]))
+    }
+    validate(need(all(vapply(data[, required_bulk_columns, drop = FALSE],
+      function(x) all(is.finite(x)), logical(1))),
+      "Some student features are missing or are not valid numbers."),
+      need(all(data$Research %in% c(0, 1)), "Research must be 0 (No) or 1 (Yes)."))
+    lower <- c(130, 0, 1, 1, 1, 0, 0)
+    upper <- c(340, 120, 5, 5, 5, 10, 1)
+    valid <- vapply(seq_along(required_bulk_columns), function(i) {
+      all(data[[required_bulk_columns[i]]] >= lower[i] & data[[required_bulk_columns[i]]] <= upper[i])
+    }, logical(1))
+    validate(need(all(valid), paste("Values outside supported ranges:",
+                                  paste(required_bulk_columns[!valid], collapse = ", "))))
     data
   })
 
@@ -497,6 +535,7 @@ server <- function(input, output, session) {
   })
 
   bulk_prediction <- eventReactive(input$run_bulk_selection, {
+    validate(need(!is.null(pca_regression_model), "Prediction model unavailable. Check the project dataset and restart."))
     data <- bulk_data()
 
     for (column in required_bulk_columns) {
@@ -538,7 +577,7 @@ server <- function(input, output, session) {
     rownames(data) <- NULL
     # Retain full precision in the same order as the ranked applicants.
     attr(data, "model_predictions") <- predictions[model_order]
-    attr(data, "upload_path") <- input$bulk_file$datapath
+    attr(data, "upload_path") <- current_upload()$datapath
     data
   })
 
@@ -583,16 +622,18 @@ server <- function(input, output, session) {
            round((1 - share) * 100), "% custom weighted score.")
   })
 
-  bulk_selection <- reactive({
+  computed_selection <- eventReactive(input$run_bulk_selection, {
     current_data <- bulk_data()
     req(current_data)
     results <- bulk_prediction()
     # A new upload must be predicted before its shortlist can be shown.
-    req(identical(attr(results, "upload_path"), input$bulk_file$datapath))
+    req(identical(attr(results, "upload_path"), current_upload()$datapath))
     model_predictions <- attr(results, "model_predictions")
     total <- nrow(results)
 
-    weights <- bulk_weights()
+    weights <- if (input$ranking_method == "model") {
+      setNames(c(.35, .05, .05, .10, .10, .30, .05), required_bulk_columns)
+    } else bulk_weights()
     lower <- c(GRE_Score = 130, TOEFL_Score = 0, University_Rating = 1,
                SOP = 1, LOR = 1, CGPA = 0, Research = 0)
     upper <- c(GRE_Score = 340, TOEFL_Score = 120, University_Rating = 5,
@@ -610,7 +651,7 @@ server <- function(input, output, session) {
     normalized <- sweep(normalized, 2, upper[names(weights)] - lower[names(weights)], "/")
     weighted_scores <- as.numeric(normalized %*% weights) * 100
     results$Weighted_Score <- round(weighted_scores, 2)
-    model_share <- bulk_model_share()
+    model_share <- if (input$ranking_method == "combined") bulk_model_share() else .60
     combined_scores <- model_share * model_predictions * 100 +
       (1 - model_share) * weighted_scores
     results$Combined_Score <- round(combined_scores, 2)
@@ -665,6 +706,7 @@ server <- function(input, output, session) {
     )
 
     list(
+      upload_path = current_upload()$datapath,
       applicants = head(results, selected_count),
       all_applicants = results,
       selected_count = selected_count,
@@ -680,6 +722,13 @@ server <- function(input, output, session) {
                        sprintf("%.2f / 100", results[[score_column]][selected_count]),
                        ".")
     )
+  })
+
+  bulk_selection <- reactive({
+    req(current_upload())
+    selection <- computed_selection()
+    req(identical(selection$upload_path, current_upload()$datapath))
+    selection
   })
 
   output$bulk_selection_summary <- renderText({
@@ -756,9 +805,10 @@ server <- function(input, output, session) {
     if (is.null(selected_rank) || !selected_rank %in% as.character(results$Rank)) {
       selected_rank <- "1"
     }
-    selectInput("bulk_applicant_rank", "Choose an applicant to inspect",
+    selectizeInput("bulk_applicant_rank", "Choose an applicant to inspect",
                 choices = setNames(as.character(results$Rank), labels),
-                selected = selected_rank)
+                selected = selected_rank, width = "100%",
+                options = list(dropdownParent = "body", maxOptions = nrow(results)))
   })
 
   bulk_profile <- reactive({
@@ -849,6 +899,7 @@ server <- function(input, output, session) {
   })
 
   nb_result <- eventReactive(input$predict, {
+    validate(need(is.null(nb_error) && !is.null(admission_data), "Naive Bayes model unavailable. Check the model file and dataset."))
 
     new_student <- student_data()
 
@@ -878,14 +929,17 @@ server <- function(input, output, session) {
   })
 
   output$nb_metrics <- renderTable({
+    validate(need(is.null(nb_error) && !is.null(admission_data), "Naive Bayes metrics unavailable."))
     nb_metrics_data
   })
 
   output$nb_confusion <- renderTable({
+    validate(need(is.null(nb_error) && !is.null(admission_data), "Naive Bayes evaluation unavailable."))
     nb_confusion_data
   })
 
   prediction_result <- eventReactive(input$predict, {
+    validate(need(!is.null(pca_regression_model), "Prediction model unavailable. Check the project dataset and restart."))
 
     new_student <- student_data()
 
@@ -1043,12 +1097,15 @@ server <- function(input, output, session) {
       ),
       ylim = c(0, 100),
       col = "#2878b5",
-      main = "Normalized Student Profile",
-      ylab = "Relative Score (%)",
+      main = "Student Scores as Percentages of Maximum",
+      ylab = "Score / maximum (%)",
       las = 2,
       border = NA
     )
-    output$research_admission_plot <- renderPlot({
+  })
+
+  output$research_admission_plot <- renderPlot({
+  req(!is.null(admission_data), nrow(admission_data) > 0)
 
   research_summary <- aggregate(
     admission_data$Admission_Class == "High Admission",
@@ -1094,6 +1151,7 @@ server <- function(input, output, session) {
 })
 
 output$university_admission_plot <- renderPlot({
+  req(!is.null(admission_data), nrow(admission_data) > 0)
 
   university_summary <- aggregate(
     admission_data$Admission_Class == "High Admission",
@@ -1137,6 +1195,7 @@ output$university_admission_plot <- renderPlot({
 })
 
 output$gre_boxplot <- renderPlot({
+  req(!is.null(admission_data), nrow(admission_data) > 0)
 
   boxplot(
     GRE_Score ~ Admission_Class,
@@ -1160,6 +1219,7 @@ output$gre_boxplot <- renderPlot({
 })
 
 output$toefl_boxplot <- renderPlot({
+  req(!is.null(admission_data), nrow(admission_data) > 0)
 
   boxplot(
     TOEFL_Score ~ Admission_Class,
@@ -1183,6 +1243,7 @@ output$toefl_boxplot <- renderPlot({
 })
 
 output$cgpa_boxplot <- renderPlot({
+  req(!is.null(admission_data), nrow(admission_data) > 0)
 
   boxplot(
     CGPA ~ Admission_Class,
@@ -1206,6 +1267,7 @@ output$cgpa_boxplot <- renderPlot({
 })
 
 output$sop_lor_plot <- renderPlot({
+  req(!is.null(admission_data), nrow(admission_data) > 0)
 
   sop_lor_summary <- aggregate(
     cbind(SOP, LOR) ~ Admission_Class,
@@ -1254,7 +1316,6 @@ output$sop_lor_plot <- renderPlot({
     cex = 0.8
   )
 })
-  })
 }
 
 shinyApp(ui = ui, server = server)
