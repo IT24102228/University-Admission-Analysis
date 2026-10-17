@@ -1,0 +1,8 @@
+Warning message:
+package 'shiny' was built under R version 4.5.3 
+
+Listening on http://127.0.0.1:4801
+Warning in read.table(file = file, header = header, sep = sep, quote = quote,  :
+  incomplete final line found by readTableHeader on 'C:\Users\user\AppData\Local\Temp\RtmpeMIbSc/48f2641969f34f4cdebeccf5/0.csv'
+Warning in read.table(file = file, header = header, sep = sep, quote = quote,  :
+  incomplete final line found by readTableHeader on 'C:\Users\user\AppData\Local\Temp\RtmpeMIbSc/573200fa1574550406eb9b58/0.csv'

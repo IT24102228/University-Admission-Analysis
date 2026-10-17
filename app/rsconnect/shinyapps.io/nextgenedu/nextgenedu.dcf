@@ -1,0 +1,10 @@
+name: nextgenedu
+title:
+username: nextgenedu
+account: nextgenedu
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 18203543
+bundleId: 12702075
+url: https://nextgenedu.shinyapps.io/nextgenedu/
+version: 1
