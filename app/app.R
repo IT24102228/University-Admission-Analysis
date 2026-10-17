@@ -4,7 +4,7 @@ library(shiny)
 # Load and prepare dataset
 # ---------------------------------------------------------
 
-data_path <- file.path("..", "data", "Graduate_Admissions.csv")
+data_path <- file.path("data", "Graduate_Admissions.csv")
 
 dataset_error <- NULL
 model_error <- NULL
